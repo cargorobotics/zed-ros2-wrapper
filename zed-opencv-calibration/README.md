@@ -39,6 +39,21 @@ cmake ..
 make -j$(nproc)
 ```
 
+### Docker (Jetson only, pinned ZED SDK 5.1.x)
+
+From this directory on the Jetson:
+
+```bash
+./calibrate_virtual_stereo_pair.sh build
+./calibrate_virtual_stereo_pair.sh run
+```
+
+Match the Stereolabs L4T segment to your JetPack line (defaults `L4T_MAJOR=35` `L4T_MINOR=4`). Set `L4T_*` and optionally `CALIBRATION_JETSON_BASE_IMAGE` before `build` if needed.
+
+**GMSL / ZED X:** `run` matches `docker-compose-deploy.yml` `zed`: **`--pid=host`**, **`-v /tmp:/tmp`**, **`-v /var/nvidia/nvcam/settings/`**, **`-v /etc/systemd/system/zed_x_daemon.service`**, plus host **tegra** library bind-mounts and **`LD_LIBRARY_PATH`** for Argus / `nvargus-daemon` on the host.
+
+Files: `Dockerfile.calibration`, `.dockerignore`, `calibrate_virtual_stereo_pair.sh`.
+
 ## Usage
 
 ### Stereo Calibration
