@@ -12,6 +12,10 @@ L4T_PATCH="${L4T_PATCH:-1}"
 
 DOCKERFILE="${SCRIPT_DIR}/Dockerfile.calibration"
 IMAGE_NAME="${ZED_CALIBRATION_IMAGE:-cargo/zed-virtual-stereo-calibration:zed-5.1.0-l4t${L4T_MAJOR}.${L4T_MINOR}-aarch64}"
+HOST_ZED_IMAGES_DIR="${HOST_ZED_IMAGES_DIR:-$HOME/zed-images}"
+# Host directory for zed_calibration_*.yml, SN*.conf, etc. (container cwd is set to this mount).
+HOST_ZED_CALIB_OUTPUT_DIR="${HOST_ZED_CALIB_OUTPUT_DIR:-$HOME/zed-calibration-output}"
+HOST_CALIB_SOURCE_DIR="${HOST_CALIB_SOURCE_DIR:-$SCRIPT_DIR}"
 
 usage() {
   echo "Usage: $(basename "$0") <build|run|shell> [extra docker args...]"
@@ -24,9 +28,14 @@ usage() {
   echo "Environment:"
   echo "  ZED_CALIBRATION_IMAGE          Override image tag"
   echo "  CALIBRATION_JETSON_BASE_IMAGE  Optional; passed as IMAGE_NAME to docker build"
+  echo "  HOST_ZED_IMAGES_DIR            Host directory for capture PNG pairs (default: $HOME/zed-images)"
+  echo "  HOST_ZED_CALIB_OUTPUT_DIR      Host directory for calibration result files (default: $HOME/zed-calibration-output)"
+  echo "  HOST_CALIB_SOURCE_DIR          Host source dir bind-mounted for live edits (default: script directory)"
   echo ""
   echo "Binaries on PATH in container: zed_stereo_calibration, zed_reprojection_viewer"
   echo "Ensure on host: systemctl is-active nvargus-daemon zed_x_daemon"
+  echo "Captures (image_left_*.png) persist to: ${HOST_ZED_IMAGES_DIR} -> /root/zed-images"
+  echo "Calibration outputs (*.yml, SN*.conf) persist to: ${HOST_ZED_CALIB_OUTPUT_DIR} -> /root/zed-calibration-out (container cwd)"
   exit 1
 }
 
@@ -58,6 +67,24 @@ case "${cmd}" in
     docker_build
     ;;
   run | shell)
+    if ! mkdir -p "${HOST_ZED_IMAGES_DIR}" 2>/dev/null; then
+      FALLBACK_ZED_IMAGES_DIR="$HOME/zed-images"
+      echo "Warning: cannot create HOST_ZED_IMAGES_DIR='${HOST_ZED_IMAGES_DIR}' (permission denied)." >&2
+      echo "         Falling back to '${FALLBACK_ZED_IMAGES_DIR}'." >&2
+      HOST_ZED_IMAGES_DIR="${FALLBACK_ZED_IMAGES_DIR}"
+      mkdir -p "${HOST_ZED_IMAGES_DIR}"
+    fi
+    if ! mkdir -p "${HOST_ZED_CALIB_OUTPUT_DIR}" 2>/dev/null; then
+      FALLBACK_CALIB_OUT="$HOME/zed-calibration-output"
+      echo "Warning: cannot create HOST_ZED_CALIB_OUTPUT_DIR='${HOST_ZED_CALIB_OUTPUT_DIR}' (permission denied)." >&2
+      echo "         Falling back to '${FALLBACK_CALIB_OUT}'." >&2
+      HOST_ZED_CALIB_OUTPUT_DIR="${FALLBACK_CALIB_OUT}"
+      mkdir -p "${HOST_ZED_CALIB_OUTPUT_DIR}"
+    fi
+    if [[ ! -d "${HOST_CALIB_SOURCE_DIR}" ]]; then
+      echo "Error: HOST_CALIB_SOURCE_DIR does not exist: ${HOST_CALIB_SOURCE_DIR}" >&2
+      exit 1
+    fi
     docker_run_args=(
       docker run --rm -it
       --runtime=nvidia
@@ -74,6 +101,10 @@ case "${cmd}" in
       -v /tmp:/tmp
       -v /var/nvidia/nvcam/settings/:/var/nvidia/nvcam/settings/
       -v /etc/systemd/system/zed_x_daemon.service:/etc/systemd/system/zed_x_daemon.service
+      -v "${HOST_ZED_IMAGES_DIR}":/root/zed-images
+      -v "${HOST_ZED_CALIB_OUTPUT_DIR}":/root/zed-calibration-out
+      -v "${HOST_CALIB_SOURCE_DIR}":/root/zed-opencv-calibration
+      -w /root/zed-calibration-out
     )
     if [[ -d /usr/lib/aarch64-linux-gnu/tegra ]]; then
       docker_run_args+=(-v /usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra)

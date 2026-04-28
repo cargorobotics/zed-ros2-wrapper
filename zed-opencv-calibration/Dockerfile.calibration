@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   libpng-dev libgomp1 zstd \
   freeglut3-dev libglew-dev libgl1-mesa-dev \
   libusb-1.0-0-dev \
+  libyaml-cpp-dev \
   gnupg2 curl \
   && rm -rf /var/lib/apt/lists/*
 

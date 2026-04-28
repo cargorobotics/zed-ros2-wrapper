@@ -52,20 +52,24 @@ Match the Stereolabs L4T segment to your JetPack line (defaults `L4T_MAJOR=35` `
 
 **GMSL / ZED X:** `run` matches `docker-compose-deploy.yml` `zed`: **`--pid=host`**, **`-v /tmp:/tmp`**, **`-v /var/nvidia/nvcam/settings/`**, **`-v /etc/systemd/system/zed_x_daemon.service`**, plus host **tegra** library bind-mounts and **`LD_LIBRARY_PATH`** for Argus / `nvargus-daemon` on the host.
 
+**Saved images:** calibration captures written to `~/zed-images` inside the container persist to host path `${HOME}/zed-images` by default. Override with `HOST_ZED_IMAGES_DIR=/your/path` before `run`.
+
+**Extrinsics-only from a directory:** set `images_dir` in the YAML config (or pass `--images_dir <dir>`) to skip acquisition and run directly on stored stereo pairs (`image_left_N.png` / `image_right_N.png`). The factory fisheye intrinsics are still pulled live from the SDK, so both ZED XOne GS cameras must be connected.
+
 Files: `Dockerfile.calibration`, `.dockerignore`, `calibrate_virtual_stereo_pair.sh`.
 
 ## Usage
 
 ### Stereo Calibration
 
-The **Stereo Calibration Tool** enables precise calibration of ZED stereo cameras and virtual stereo rigs (e.g., two ZED X One cameras) using a checkerboard pattern. This process computes intrinsic camera parameters (focal length, principal point, distortion coefficients) and extrinsic parameters (relative position and orientation between cameras).
+The **Stereo Calibration Tool** is targeted at ZED XOne **GS** fisheye stereo pairs. It assumes both cameras have been factory-calibrated by Stereolabs, pulls each camera's fisheye intrinsics from the ZED SDK live, holds them **fixed**, and solves only the stereo extrinsics (R, T) with `cv::CALIB_FIX_INTRINSIC`. Mono intrinsic calibration is not performed.
 
 #### Checkerboard Pattern Requirements
 
 The calibration requires a printed checkerboard pattern with:
 
-- **Default configuration**: [9x6 checkerboard with 25.4 mm squares](https://github.com/opencv/opencv/blob/4.x/doc/pattern.png/)
-- **Custom patterns**: Supported via command-line options (see below)
+- **Default configuration**: [9x6 checkerboard with 23.5 mm squares](https://github.com/opencv/opencv/blob/4.x/doc/pattern.png/)
+- **Custom patterns**: Set `checkerboard.h_edges` / `v_edges` / `square_size_mm` in the YAML config.
 
 **Important**: The pattern dimensions refer to the number of **inner corners** (where black and white squares meet), not the number of squares.
 
@@ -75,58 +79,48 @@ The calibration requires a printed checkerboard pattern with:
 - Ensure the pattern is perfectly flat and well-lit.
 - Avoid reflections or glare on the checkerboard surface.
 
-#### Run the Calibration
+#### Configure the Calibration
 
-Default command to start calibration:
+Edit `stereo_calibration/config/fisheye_stereo.yaml` (or copy to your own path) with your camera serials, ZED SDK native resolution mode, and checkerboard parameters:
+
+```yaml
+left_sn: 305932808
+right_sn: 305481469
+resolution: HD1200
+checkerboard:
+  h_edges: 9
+  v_edges: 6
+  square_size_mm: 23.5
+images_dir: ""   # optional: skip live capture and run from these pairs
+```
+
+>:pushpin: **Note**: You can read each camera's serial number, factory intrinsics, and inferred distortion model with the helper utility:
+>
+> ```bash
+> zed_print_camera_intrinsics <left_sn> [<right_sn> ...]
+> ```
+
+#### Run the Calibration
 
 ```bash
 cd build/stereo_calibration/
-./zed_stereo_calibration
+./zed_stereo_calibration --config /opt/zed-opencv-calibration/stereo_calibration/config/fisheye_stereo.yaml
 ```
-
-This command tries to open the first connected ZED camera for live calibration using the default checkerboard settings.
-
-You can also specify different options to calibrate virtual stereo cameras or use custom checkerboard parameters:
 
 ```bash
+Usage: ./zed_stereo_calibration --config <yaml> [--images_dir <dir>] [--verbose]
 
-Usage: ./zed_stereo_calibration [options]
-  --h_edges <value>      Number of horizontal inner edges of the checkerboard
-  --v_edges <value>      Number of vertical inner edges of the checkerboard
-  --square_size <value>  Size of a square in the checkerboard (in mm)
-  --svo <file>           Path to the SVO file.
-  --fisheye              Use fisheye lens model.
-  --virtual              Use ZED X One cameras as a virtual stereo pair.
-  --left_id <id>         Id of the left camera if using virtual stereo.
-  --right_id <id>        Id of the right camera if using virtual stereo.
-  --left_sn <sn>         S/N of the left camera if using virtual stereo.
-  --right_sn <sn>        S/N of the right camera if using virtual stereo.
-  --help, -h             Show this help message.
+  --config <yaml>      Path to the fisheye stereo calibration config (required).
+                       Defines left_sn, right_sn, resolution (HD1200/HD1080/HD720/SVGA), checkerboard,
+                       and an optional images_dir.
+  --images_dir <dir>   Override images_dir from the config. When set (here or
+                       in the config) the live capture step is skipped and
+                       stereo extrinsics are solved directly from the existing
+                       pairs (image_left_N.png / image_right_N.png).
+  --verbose            Enable verbose output.
 ```
 
-#### Stereo Calibration Example Commands
-
-- ZED Stereo Camera using an SVO file:
-
-  `./zed_stereo_calibration --svo <full_path_to_svo_file>`
-
-- Virtual Stereo Camera using camera IDs:
-
-  `./zed_stereo_calibration --virtual --left_id 0 --right_id 1`
-
-- Virtual Stereo Camera using camera serial numbers and a custom checkerboard (size 12x9 with 30mm squares):
-
-  `./zed_stereo_calibration --virtual --left_sn <serial_number> --right_sn <serial_number> --h_edges 12 --v_edges 9 --square_size 30.0`
-
-- Virtual Stereo Camera with **fisheye lenses** using camera serial numbers:
-
-  `./zed_stereo_calibration --fisheye --virtual --left_sn <serial_number> --right_sn <serial_number>`
-
->:pushpin: **Note**: You can easily obtain the serial numbers or the IDs of your connected ZED cameras by running the following command:
->
-> ```bash
-> ZED_Explorer --all
-> ```
+Both ZED XOne GS cameras must be connected when running the tool: the factory fisheye intrinsics are read from the SDK at startup even when re-using a directory of previously-collected pairs.
 
 #### Calibration Process
 
@@ -185,10 +179,10 @@ For each metric, the GUI shows the following information in a table:
 
 You can follow the steps of the calibration process in the terminal output:
 
-1. The left camera is calibrated first, followed by the right camera to obtain the intrinsic parameters.
-2. Finally, the stereo calibration is performed to compute the extrinsic parameters between the two cameras.
+1. Each camera's factory fisheye intrinsics are read from the ZED SDK and held fixed.
+2. The stereo calibration is then performed to compute the extrinsic parameters (R, T) between the two cameras.
 
-Good calibration results typically yield a reprojection error below 0.5 pixels for each calibration step.
+Good calibration results typically yield a stereo reprojection error below 0.5 pixels.
 
 If any reprojection error is too high, the calibration is not accurate enough and should be redone. Before recalibrating, verify the following:
 
