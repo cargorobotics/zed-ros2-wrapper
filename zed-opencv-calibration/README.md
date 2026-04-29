@@ -81,12 +81,13 @@ The calibration requires a printed checkerboard pattern with:
 
 #### Configure the Calibration
 
-Edit `stereo_calibration/config/fisheye_stereo.yaml` (or copy to your own path) with your camera serials, ZED SDK native resolution mode, and checkerboard parameters:
+Edit `config/fisheye_stereo.yaml` (or copy to your own path) with your camera serials, ZED SDK native resolution mode, calibration output directory, and checkerboard parameters:
 
 ```yaml
 left_sn: 305932808
 right_sn: 305481469
 resolution: HD1200
+calibration_output_dir: "/root/zed-calibration-out"
 checkerboard:
   h_edges: 9
   v_edges: 6
@@ -94,21 +95,20 @@ checkerboard:
 images_dir: ""   # optional: skip live capture and run from these pairs
 ```
 
->:pushpin: **Note**: You can read each camera's serial number, factory intrinsics, and inferred distortion model with the helper utility:
->
-> ```bash
-> zed_print_camera_intrinsics <left_sn> [<right_sn> ...]
-> ```
-
 #### Run the Calibration
 
 ```bash
-cd build/stereo_calibration/
-./zed_stereo_calibration --config /opt/zed-opencv-calibration/stereo_calibration/config/fisheye_stereo.yaml
+zed_stereo_calibration --config /opt/zed-opencv-calibration/config/fisheye_stereo.yaml
+```
+
+Inside the calibration Docker container (`./calibrate_virtual_stereo_pair.sh run`), you can run with the source-mounted config:
+
+```bash
+zed_stereo_calibration --config /root/zed-opencv-calibration/config/fisheye_stereo.yaml
 ```
 
 ```bash
-Usage: ./zed_stereo_calibration --config <yaml> [--images_dir <dir>] [--verbose]
+Usage: zed_stereo_calibration --config <yaml> [--images_dir <dir>] [--verbose]
 
   --config <yaml>      Path to the fisheye stereo calibration config (required).
                        Defines left_sn, right_sn, resolution (HD1200/HD1080/HD720/SVGA), checkerboard,
@@ -241,38 +241,16 @@ For virtual stereo camera setups (e.g., two ZED X One cameras), the reprojection
 Default command to start the reprojection viewer:
 
 ```bash
-cd build/stereo_reprojection_viewer
-./zed_reprojection_viewer [options]
+zed_reprojection_viewer
 ```
 
-This command tries to open the first connected ZED stereo camera for live reprojection viewing.
+The viewer reads all settings from `config/fisheye_stereo.yaml`:
+- uses `left_sn` / `right_sn`,
+- regenerates the virtual stereo SN with `sl::generateVirtualStereoSerialNumber`,
+- and uses `calibration_output_dir` as the ZED SDK optional settings directory.
 
-You can also specify different options to use virtual stereo cameras, fisheye lenses, or an SVO file:
+Inside the calibration Docker container (`./calibrate_virtual_stereo_pair.sh run`):
 
 ```bash
-Usage: ./zed_reprojection_viewer [options]
-  --svo <file>          Path to the SVO file.
-  --calib_path <file>   Path to the optional calibration file
-  --ocv <file>          Path to an optional OpenCV calibration file
-  --fisheye             Use fisheye lens model.
-  --virtual             Use ZED X One cameras as a virtual stereo pair.
-  --left_id <id>        Id of the left camera if using virtual stereo.
-  --right_id <id>       Id of the right camera if using virtual stereo.
-  --left_sn <sn>        S/N of the left camera if using virtual stereo.
-  --right_sn <sn>       S/N of the right camera if using virtual stereo.
-  --help, -h            Show this help message.
+zed_reprojection_viewer
 ```
-
-#### Stereo Reprojection Viewer Example Commands
-
-- ZED Stereo Camera using an SVO file:
-
-  `./zed_reprojection_viewer --svo <full_path_to_svo_file>`
-
-- Virtual Stereo Camera using camera IDs:
-
-  `./zed_reprojection_viewer --virtual --left_id 0 --right_id 1`
-
-- Virtual Stereo Camera with fisheye lenses using camera serial numbers:
-
-  `./zed_reprojection_viewer --fisheye --virtual --left_sn <serial_number> --right_sn <serial_number>`

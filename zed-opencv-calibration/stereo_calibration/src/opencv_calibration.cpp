@@ -1,10 +1,17 @@
 #include "opencv_calibration.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <locale>
+#include <map>
+#include <set>
+#include <vector>
 
 int calibrate(int img_count, const std::string& folder, StereoCalib& calib_data, int h_edges, int v_edges, double square_size, int serial,
+              int left_sn, int right_sn,
               bool is_dual_mono, bool is_4k, bool save_calib_mono, bool use_intrinsic_prior, bool recalibrate_intrinsics, double max_repr_error,
-              bool verbose, int min_stereo_samples) {
+              bool verbose, int min_stereo_samples, const std::string& calibration_output_dir) {
     std::vector<cv::Mat> left_images, right_images;
 
     /// Read images
@@ -223,7 +230,16 @@ int calibrate(int img_count, const std::string& folder, StereoCalib& calib_data,
 
     std::cout << std::endl << "*** Save Calibration files ***" << std::endl;
 
-    std::string opencv_file = calib_data.saveCalibOpenCV(serial);
+    if (!calibration_output_dir.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(calibration_output_dir, ec);
+        if (ec) {
+            std::cerr << " !!! Cannot create calibration_output_dir '" << calibration_output_dir << "': " << ec.message() << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+
+    std::string opencv_file = calib_data.saveCalibOpenCV(serial, calibration_output_dir);
     if (!opencv_file.empty()) {
         std::cout << " * OpenCV calibration file saved: " << opencv_file << std::endl;
     } else {
@@ -232,7 +248,7 @@ int calibrate(int img_count, const std::string& folder, StereoCalib& calib_data,
 
     // SDK format is only supported for dual-mono setups
     if (is_dual_mono) {
-        std::string zed_file = calib_data.saveCalibZED(serial, is_4k);
+        std::string zed_file = calib_data.saveCalibZED(serial, left_sn, right_sn, is_4k, calibration_output_dir);
         if (!zed_file.empty()) {
             std::cout << " * ZED SDK calibration file saved: " << zed_file << std::endl;
         } else {
@@ -243,10 +259,12 @@ int calibrate(int img_count, const std::string& folder, StereoCalib& calib_data,
     return EXIT_SUCCESS;
 }
 
-std::string StereoCalib::saveCalibOpenCV(int serial) {
-    std::string calib_filename = "zed_calibration_" + std::to_string(serial) + ".yml";
+std::string StereoCalib::saveCalibOpenCV(int serial, const std::string& calibration_output_dir) {
+    const std::string basename = "zed_calibration_" + std::to_string(serial) + ".yml";
+    const std::filesystem::path calib_path =
+        calibration_output_dir.empty() ? std::filesystem::path(basename) : std::filesystem::path(calibration_output_dir) / basename;
 
-    cv::FileStorage fs(calib_filename, cv::FileStorage::WRITE);
+    cv::FileStorage fs(calib_path.string(), cv::FileStorage::WRITE);
     if (fs.isOpened()) {
         fs << "Size" << imageSize;
         fs << "K_LEFT" << left.K << "K_RIGHT" << right.K;
@@ -260,7 +278,7 @@ std::string StereoCalib::saveCalibOpenCV(int serial) {
         fs << "R" << Rv << "T" << T;
         fs.release();
 
-        return calib_filename;
+        return calib_path.string();
     }
 
     return std::string();
@@ -282,19 +300,236 @@ void printDisto(const CameraCalib& calib, std::ofstream& outfile) {
         outfile << "k2 = " << calib.D.at<double>(1) << "\n";
         outfile << "k3 = " << calib.D.at<double>(2) << "\n";
         outfile << "k4 = " << calib.D.at<double>(3) << "\n";
+        outfile << "k5 = 0\n";
+        outfile << "k6 = 0\n";
+        outfile << "p1 = 0\n";
+        outfile << "p2 = 0\n";
     }
     outfile << "\n";
 }
 
-std::string StereoCalib::saveCalibZED(int serial, bool is_4k) {
-    std::string calib_filename = "SN" + std::to_string(serial) + ".conf";
+namespace {
+
+std::string trim(const std::string& s) {
+    const auto begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    const auto end = s.find_last_not_of(" \t\r\n");
+    return s.substr(begin, end - begin + 1);
+}
+
+struct IniData {
+    std::vector<std::string> section_order;
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> sections;
+};
+
+bool parseIniFile(const std::filesystem::path& path, IniData& out_ini) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return false;
+    }
+
+    std::string line;
+    std::string section;
+    while (std::getline(in, line)) {
+        const std::string stripped = trim(line);
+        if (stripped.empty() || stripped[0] == '#' || stripped[0] == ';') {
+            continue;
+        }
+        if (stripped.front() == '[' && stripped.back() == ']') {
+            section = stripped.substr(1, stripped.size() - 2);
+            if (!out_ini.sections.count(section)) {
+                out_ini.section_order.push_back(section);
+                out_ini.sections[section] = {};
+            }
+            continue;
+        }
+        const auto eq = stripped.find('=');
+        if (eq == std::string::npos || section.empty()) {
+            continue;
+        }
+        out_ini.sections[section].push_back({trim(stripped.substr(0, eq)), trim(stripped.substr(eq + 1))});
+    }
+    return !out_ini.sections.empty();
+}
+
+void writeSection(std::ofstream& outfile, const std::string& section, const std::vector<std::pair<std::string, std::string>>& kvs) {
+    outfile << "[" << section << "]\n";
+    for (const auto& kv : kvs) {
+        outfile << kv.first << " = " << kv.second << "\n";
+    }
+    outfile << "\n";
+}
+
+std::filesystem::path resolveTemplatePath(int serial) {
+    const std::string file_name = "SN" + std::to_string(serial) + ".conf";
+    const std::vector<std::filesystem::path> candidates = {
+        std::filesystem::path(file_name),
+        std::filesystem::path("/usr/local/zed/settings") / file_name,
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+void writeStereoSection(std::ofstream& outfile, const cv::Mat& T, const cv::Mat& Rv, const std::vector<std::string>& stereo_suffix_order) {
+    outfile << "[STEREO]\n";
+    outfile << "Baseline = " << -T.at<double>(0) << "\n";
+    outfile << "TY = " << T.at<double>(1) << "\n";
+    outfile << "TZ = " << T.at<double>(2) << "\n";
+
+    for (const auto& suffix : stereo_suffix_order) {
+        outfile << "CV_" << suffix << " = " << Rv.at<double>(1) << "\n";
+    }
+    for (const auto& suffix : stereo_suffix_order) {
+        outfile << "RX_" << suffix << " = " << Rv.at<double>(0) << "\n";
+    }
+    for (const auto& suffix : stereo_suffix_order) {
+        outfile << "RZ_" << suffix << " = " << Rv.at<double>(2) << "\n";
+    }
+    outfile << "\n";
+}
+
+// Order CV_/RX_/RZ_ keys like factory stereo files (see SN*.conf): FHD, SVGA, FHD1200, then other suffixes.
+std::vector<std::string> stereoRotationKeyOrder(const std::vector<std::string>& suffixes_union) {
+    static const std::vector<std::string> kPreferred = {"FHD", "SVGA", "FHD1200", "4k", "QHDPLUS"};
+    std::set<std::string> remaining(suffixes_union.begin(), suffixes_union.end());
+    std::vector<std::string> ordered;
+    for (const auto& p : kPreferred) {
+        if (remaining.count(p)) {
+            ordered.push_back(p);
+            remaining.erase(p);
+        }
+    }
+    std::vector<std::string> rest(remaining.begin(), remaining.end());
+    std::sort(rest.begin(), rest.end());
+    ordered.insert(ordered.end(), rest.begin(), rest.end());
+    return ordered;
+}
+
+// ZED SDK expects all eight keys in [LEFT_DISTO]/[RIGHT_DISTO] (k1..k4, k5, k6, p1, p2). Fisheye uses k1..k4
+// for the main model; pad missing keys with 0 to match factory mono files and silence SDK warnings.
+std::vector<std::pair<std::string, std::string>> normalizedStereoDisto(
+    const std::vector<std::pair<std::string, std::string>>& raw) {
+    std::map<std::string, std::string> m;
+    for (const auto& kv : raw) {
+        m[kv.first] = kv.second;
+    }
+    if (!m.count("k1") || !m.count("k2") || !m.count("k3") || !m.count("k4")) {
+        return raw;
+    }
+    static const char* kKeyOrder[8] = {"k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2"};
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(8);
+    for (const char* key : kKeyOrder) {
+        out.push_back({key, m.count(key) ? m.at(key) : std::string("0")});
+    }
+    return out;
+}
+
+bool writeMergedTemplateConfig(std::ofstream& outfile, int left_sn, int right_sn, const cv::Mat& T, const cv::Mat& Rv) {
+    const auto left_path = resolveTemplatePath(left_sn);
+    const auto right_path = resolveTemplatePath(right_sn);
+    if (left_path.empty() || right_path.empty()) {
+        return false;
+    }
+
+    IniData left_ini;
+    IniData right_ini;
+    if (!parseIniFile(left_path, left_ini) || !parseIniFile(right_path, right_ini)) {
+        return false;
+    }
+
+    std::vector<std::string> camera_suffixes;
+    for (const auto& section : left_ini.section_order) {
+        if (section.rfind("CAM_", 0) == 0) {
+            const std::string suffix = section.substr(4);
+            camera_suffixes.push_back(suffix);
+        }
+    }
+    for (const auto& section : right_ini.section_order) {
+        if (section.rfind("CAM_", 0) == 0) {
+            const std::string suffix = section.substr(4);
+            if (std::find(camera_suffixes.begin(), camera_suffixes.end(), suffix) == camera_suffixes.end()) {
+                camera_suffixes.push_back(suffix);
+            }
+        }
+    }
+
+    const std::string cam_section = "CAM_";
+    for (const auto& suffix : camera_suffixes) {
+        const std::string sec = cam_section + suffix;
+        if (left_ini.sections.count(sec)) {
+            writeSection(outfile, "LEFT_CAM_" + suffix, left_ini.sections.at(sec));
+        }
+        if (right_ini.sections.count(sec)) {
+            writeSection(outfile, "RIGHT_CAM_" + suffix, right_ini.sections.at(sec));
+        }
+    }
+
+    bool wrote_disto = false;
+    if (left_ini.sections.count("DISTO")) {
+        writeSection(outfile, "LEFT_DISTO", normalizedStereoDisto(left_ini.sections.at("DISTO")));
+        wrote_disto = true;
+    }
+    if (right_ini.sections.count("DISTO")) {
+        writeSection(outfile, "RIGHT_DISTO", normalizedStereoDisto(right_ini.sections.at("DISTO")));
+        wrote_disto = true;
+    }
+    if (!wrote_disto) {
+        return false;
+    }
+
+    std::string sensor_id = "1";
+    if (left_ini.sections.count("MISC")) {
+        for (const auto& kv : left_ini.sections.at("MISC")) {
+            if (kv.first == "Sensor_ID") {
+                sensor_id = kv.second;
+                break;
+            }
+        }
+    } else if (right_ini.sections.count("MISC")) {
+        for (const auto& kv : right_ini.sections.at("MISC")) {
+            if (kv.first == "Sensor_ID") {
+                sensor_id = kv.second;
+                break;
+            }
+        }
+    }
+
+    const std::vector<std::string> stereo_key_order = stereoRotationKeyOrder(camera_suffixes);
+    writeStereoSection(outfile, T, Rv, stereo_key_order);
+    // Append [MISC] after stereo — mono templates place it last; keeps core stereo layout recognizable to the SDK.
+    writeSection(outfile, "MISC", {{"Sensor_ID", sensor_id}});
+    return true;
+}
+
+}  // namespace
+
+std::string StereoCalib::saveCalibZED(int serial, int left_sn, int right_sn, bool is_4k, const std::string& calibration_output_dir) {
+    const std::string basename = "SN" + std::to_string(serial) + ".conf";
+    const std::filesystem::path calib_path =
+        calibration_output_dir.empty() ? std::filesystem::path(basename) : std::filesystem::path(calibration_output_dir) / basename;
 
     // Write parameters to a text file
-    std::ofstream outfile(calib_filename);
+    std::ofstream outfile(calib_path.string());
     if (!outfile.is_open()) {
         std::cerr << " !!! Cannot save the calibration file: 'Unable to open output file'" << std::endl;
         return std::string();
     }
+    outfile.imbue(std::locale::classic());
+
+    if (writeMergedTemplateConfig(outfile, left_sn, right_sn, T, Rv)) {
+        outfile.close();
+        return calib_path.string();
+    }
+
+    std::cerr << " ! Warning: could not load template SN config files for SN" << left_sn << " and SN" << right_sn
+              << ". Falling back to generated intrinsics/distortion." << std::endl;
 
     if (!is_4k) {  //  AR0234
 
@@ -347,6 +582,9 @@ std::string StereoCalib::saveCalibZED(int serial, bool is_4k) {
         outfile << "[RIGHT_DISTO]\n";
         printDisto(right, outfile);
 
+        outfile << "[MISC]\n";
+        outfile << "Sensor_ID = 1\n\n";
+
         outfile << "[STEREO]\n";
         outfile << "Baseline = " << -T.at<double>(0) << "\n";
         outfile << "TY = " << T.at<double>(1) << "\n";
@@ -362,7 +600,7 @@ std::string StereoCalib::saveCalibZED(int serial, bool is_4k) {
         outfile << "RZ_FHD1200 = " << Rv.at<double>(2) << "\n\n";
 
         outfile.close();
-        return calib_filename;
+        return calib_path.string();
     } else {  //  IMX678
 
         if (imageSize.height != 2160) {
@@ -426,6 +664,9 @@ std::string StereoCalib::saveCalibZED(int serial, bool is_4k) {
         outfile << "[RIGHT_DISTO]\n";
         printDisto(right, outfile);
 
+        outfile << "[MISC]\n";
+        outfile << "Sensor_ID = 1\n\n";
+
         outfile << "[STEREO]\n";
         outfile << "Baseline = " << -T.at<double>(0) << "\n";
         outfile << "TY = " << T.at<double>(1) << "\n";
@@ -444,6 +685,6 @@ std::string StereoCalib::saveCalibZED(int serial, bool is_4k) {
         outfile << "RZ_QHDPLUS = " << Rv.at<double>(2) << "\n\n";
 
         outfile.close();
-        return calib_filename;
+        return calib_path.string();
     }
 }

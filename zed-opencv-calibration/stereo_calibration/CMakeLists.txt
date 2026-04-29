@@ -32,12 +32,9 @@ set(CALIBRATION_SOURCES
 
 add_executable(${PROJECT_NAME} ${HDR_FILES} ${CALIBRATION_SOURCES})
 
-add_executable(zed_print_camera_intrinsics src/print_camera_intrinsics.cpp)
-
 TARGET_LINK_LIBRARIES(${PROJECT_NAME} ${ZED_LIBRARIES} ${CUDA_LIBRARIES} ${OpenCV_LIBRARIES} yaml-cpp)
-target_link_libraries(zed_print_camera_intrinsics ${ZED_LIBRARIES} ${CUDA_LIBRARIES})
 
-# Ship the example config alongside the binary so the user can do:
-#   zed_stereo_calibration --config /opt/zed-opencv-calibration/stereo_calibration/config/fisheye_stereo.yaml
-install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config FILES_MATCHING PATTERN "*.yaml")
+# Ship shared config alongside the binaries.
+#   zed_stereo_calibration --config /opt/zed-opencv-calibration/config/fisheye_stereo.yaml
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/config/ DESTINATION share/${PROJECT_NAME}/config FILES_MATCHING PATTERN "*.yaml")
 

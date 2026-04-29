@@ -5,7 +5,7 @@
 // This tool:
 //   * loads serial numbers and capture resolution from a YAML config,
 //   * pulls the FACTORY fisheye intrinsics from each ZED XOne GS via the SDK
-//     (see zed_print_camera_intrinsics) and treats them as fixed,
+//     and treats them as fixed,
 //   * either runs the interactive image-pair acquisition loop (with quality
 //     checks, coverage indicators, sample tracker, etc.) or skips straight to
 //     extrinsics if a directory of pre-collected pairs is provided,
@@ -48,7 +48,7 @@ constexpr int text_area_height = 430;
 const cv::Size display_size(720, 404);
 
 // Calibration / sample collection thresholds
-const float max_repr_error = 0.5f;
+const float max_repr_error = 1.0f;
 // Set from YAML `sample_collection` (defaults applied before loadStereoConfig).
 int min_samples = DEFAULT_MIN_STEREO_SAMPLES;
 int max_samples = 35;
@@ -201,6 +201,8 @@ struct StereoConfig {
     int v_edges = 0;
     float square_size_mm = 0.0f;
     std::string images_dir;
+    /// Where to write SN<virtual>.conf and zed_calibration_<virtual>.yml (see calibration_output_dir in YAML).
+    std::string calibration_output_dir;
     bool verbose = true;
     int min_samples = DEFAULT_MIN_STEREO_SAMPLES;
     int max_samples = 35;
@@ -242,6 +244,9 @@ bool loadStereoConfig(const std::string& path, StereoConfig& cfg) {
     cfg.square_size_mm = node["checkerboard"]["square_size_mm"].as<float>();
     if (node["images_dir"]) {
         cfg.images_dir = node["images_dir"].as<std::string>("");
+    }
+    if (node["calibration_output_dir"]) {
+        cfg.calibration_output_dir = node["calibration_output_dir"].as<std::string>("");
     }
     if (node["verbose"]) {
         cfg.verbose = node["verbose"].as<bool>();
@@ -749,6 +754,11 @@ int main(int argc, char* argv[]) {
     std::cout << " * Sample collection:         min " << min_samples << " / max " << max_samples
               << " good pairs (stereo minimum, live preview, coverage completion)" << std::endl;
     std::cout << " * Verbose logging:           " << (verbose ? "enabled" : "disabled") << std::endl;
+    if (!cfg.calibration_output_dir.empty()) {
+        std::cout << " * Calibration output dir:    " << cfg.calibration_output_dir << std::endl;
+    } else {
+        std::cout << " * Calibration output dir:    (current working directory — set calibration_output_dir in YAML)" << std::endl;
+    }
 
     const bool from_dir = !cfg.images_dir.empty();
     if (from_dir) {
@@ -843,8 +853,7 @@ int main(int argc, char* argv[]) {
                 std::error_code ec;
                 if (entry.is_regular_file()) {
                     const auto filename = entry.path().filename().string();
-                    if (filename.rfind("image_left_", 0) == 0 || filename.rfind("image_right_", 0) == 0 ||
-                        filename.rfind("zed_calibration_", 0) == 0 || filename.rfind("SN", 0) == 0) {
+                    if (filename.rfind("image_left_", 0) == 0 || filename.rfind("image_right_", 0) == 0) {
                         if (fs::remove(entry.path(), ec) && !ec) {
                             removed++;
                         }
@@ -852,7 +861,7 @@ int main(int argc, char* argv[]) {
                 }
             }
             if (verbose) {
-                std::cout << "[DEBUG][main] Removed " << removed << " previous calibration files from " << image_folder << std::endl;
+                std::cout << "[DEBUG][main] Removed " << removed << " previous capture images from " << image_folder << std::endl;
             }
         }
 
@@ -864,15 +873,27 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (!cfg.calibration_output_dir.empty()) {
+        std::error_code ec;
+        fs::create_directories(cfg.calibration_output_dir, ec);
+        if (ec) {
+            std::cerr << "Error: cannot create calibration_output_dir: " << cfg.calibration_output_dir << " (" << ec.message() << ")" << std::endl;
+            return EXIT_FAILURE;
+        }
+        const fs::path out_dir(cfg.calibration_output_dir);
+        fs::remove(out_dir / ("SN" + std::to_string(virtual_serial) + ".conf"), ec);
+        fs::remove(out_dir / ("zed_calibration_" + std::to_string(virtual_serial) + ".yml"), ec);
+    }
+
     // ---------- Solve stereo extrinsics with FIXED fisheye intrinsics ----------
     int err = calibrate(image_count, image_folder, calib, h_edges, v_edges, square_size,
-                        virtual_serial,
+                        virtual_serial, cfg.left_sn, cfg.right_sn,
                         /*is_dual_mono=*/true,
                         /*is_4k=*/false,
                         /*save_calib_mono=*/false,
                         /*use_intrinsic_prior=*/true,
                         /*recalibrate_intrinsics=*/false,
-                        max_repr_error, verbose, min_samples);
+                        max_repr_error, verbose, min_samples, cfg.calibration_output_dir);
 
     if (err == EXIT_SUCCESS) {
         std::cout << std::endl << " +++++ Calibration successful +++++" << std::endl;

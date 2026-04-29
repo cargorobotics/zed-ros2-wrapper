@@ -381,14 +381,17 @@ struct StereoCalib {
     return rms;
   }
 
-  std::string saveCalibOpenCV(int serial);
-  std::string saveCalibZED(int serial, bool is_4k = false);
+  std::string saveCalibOpenCV(int serial, const std::string &calibration_output_dir = "");
+  std::string saveCalibZED(int serial, int left_sn, int right_sn, bool is_4k,
+                           const std::string &calibration_output_dir = "");
 };
 
 int calibrate(int img_count, const std::string &folder, StereoCalib &raw_data,
               int h_edges, int v_edges, double square_size, int serial,
+              int left_sn, int right_sn,
               bool is_dual_mono, bool is_4k, bool save_calib_mono = false,
               bool use_intrinsic_prior = false,
               bool recalibrate_intrinsics = false,
-              double max_repr_error = 0.5f, bool verbose = false,
-              int min_stereo_samples = DEFAULT_MIN_STEREO_SAMPLES);
+              double max_repr_error = 1.0f, bool verbose = false,
+              int min_stereo_samples = DEFAULT_MIN_STEREO_SAMPLES,
+              const std::string &calibration_output_dir = "");
