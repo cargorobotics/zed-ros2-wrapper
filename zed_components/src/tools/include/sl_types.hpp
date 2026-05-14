@@ -66,8 +66,7 @@
 #include <zed_msgs/srv/set_pose.hpp>
 #include <zed_msgs/srv/set_roi.hpp>
 #include <zed_msgs/srv/start_svo_rec.hpp>
-// #include <zed_msgs/srv/save_area_memory.hpp> TODO(Walter): Uncomment when
-// available in `zed_msgs` package from APT
+#include <zed_msgs/srv/save_area_memory.hpp>
 
 #ifdef FOUND_ISAAC_ROS_NITROS
   #include "isaac_ros_managed_nitros/managed_nitros_publisher.hpp"
@@ -83,6 +82,11 @@
 
 constexpr auto HEARTBEAT_INTERVAL_MS = 1000;  // Publish heartbeat every second
 constexpr auto TEMP_PUB_INTERVAL_MS = 1000;  // Publish temperature every second
+
+// TypeAdapter for sl::Mat <-> sensor_msgs::msg::Image (must be outside
+// namespace stereolabs to avoid pulling sensor_msgs into stereolabs scope)
+#include "sl_type_adapter.hpp"
+using SlImageAdapter = rclcpp::TypeAdapter<stereolabs::StampedSlMat, sensor_msgs::msg::Image>;
 
 namespace stereolabs
 {
@@ -124,6 +128,8 @@ typedef rclcpp::Publisher<zed_msgs::msg::Heartbeat>::SharedPtr heartbeatStatusPu
 typedef rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr imagePub;
 typedef rclcpp::Publisher<stereo_msgs::msg::DisparityImage>::SharedPtr disparityPub;
 
+typedef rclcpp::Publisher<SlImageAdapter>::SharedPtr adaptedImagePub;
+
 typedef rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloudPub;
 
 typedef rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imuPub;
@@ -154,12 +160,12 @@ typedef rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr clicke
 typedef rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gnssFixSub;
 typedef rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clockSub;
 
+typedef rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enableDepthPtr;
+
 typedef rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr resetOdomSrvPtr;
 typedef rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr resetPosTrkSrvPtr;
 typedef rclcpp::Service<zed_msgs::srv::SetPose>::SharedPtr setPoseSrvPtr;
-// typedef rclcpp::Service<zed_msgs::srv::SaveAreaMemory>::SharedPtr saveAreaMemorySrvPtr; TODO(Walter): Uncomment when available in `zed_msgs` package from APT
-typedef rclcpp::Service<zed_msgs::srv::SetROI>::SharedPtr saveAreaMemorySrvPtr;
-
+typedef rclcpp::Service<zed_msgs::srv::SaveAreaMemory>::SharedPtr saveAreaMemorySrvPtr;
 typedef rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enableObjDetPtr;
 typedef rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enableBodyTrkPtr;
 typedef rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enableMappingPtr;

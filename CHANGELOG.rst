@@ -1,6 +1,61 @@
 LATEST CHANGES
 ==============
 
+v5.3
+----------
+- Added voxel point cloud support. When `depth.voxel_point_cloud` is enabled, the point cloud topic publishes voxel-decimated data using ``retrieveVoxelMeasure()``. New parameters: ``depth.voxel_size_mm`` (voxel cell size in millimeters), ``depth.voxel_resolution_mode`` (``FIXED``, ``STEREO_UNCERTAINTY``, ``LINEAR``), and ``depth.voxel_resolution_scale``. All voxel parameters are dynamically reconfigurable.
+- Added handling of `ERROR_CODE::CAMERA_EXCEEDS_BANDWIDTH` during camera open in both stereo and mono components. When a GMSL PHY CSI bandwidth overflow is detected, the node logs an error and stops initialization.
+- Added `XVGA` as a valid `grab_resolution` option for ZED X HDR camera configurations (`zedxhdr`, `zedxhdrmax`, `zedxhdrmini`, `zedxonehdr`).
+- Added `XVGA` resolution parsing in both stereo (`ZedCamera`) and mono (`ZedCameraOne`) components.
+- IPC is now handled automatically, disabling it when NITROS is enabled and enabling it when NITROS is disabled. The `debug.disable_nitros` parameter can be used to disable NITROS and enable IPC if needed.
+- Added support to `rclcpp::TypeAdapter` for better handling of Image messages:
+
+  - A `TypeAdapter` publisher handles the base "raw" topic. Intra-process subscribers receive `StampedSlMat`` (wrapping `sl::Mat``) directly without serialization. Inter-process subscribers receive `sensor_msgs/msg/Image` via automatic `TypeAdapter` conversion.
+  - An `image_transport` publisher handles the transport-specific topics (e.g., `compressed`, `theora`). The "raw" transport is disabled to avoid duplicate messages.
+  - Image transport plugins are now filtered by topic type: visual topics (IMAGE) only advertise `compressed` and `theora`, while measurement topics (MEASURE) only advertise `compressedDepth`. This prevents silent data corruption from incompatible plugin/encoding combinations (e.g., JPEG on float depth).
+  - When the package `isaac_ros_nitros` is installed and NITROS not disabled via the `debug.disable_nitros` parameter, NITROS publishers take priority, and neither `TypeAdapter` nor `image_transport` publishers are created.
+
+v5.2.2
+----------
+- Default Positional Tracking mode changed back to `GEN_1` until the stability and reliability of `GEN_3` is improved. 
+  Users can still select a specific mode by setting the `pos_tracking.pos_tracking_mode` parameter to `GEN_1`, `GEN_2`, or `GEN_3` according to their needs and preferences.
+- Modified node behaviors when Positional Tracking is disabled [`pos_tracking.pos_tracking_enabled: false`]:
+
+  - `publish_tf` is automatically disabled.
+  - The `odom` related topics are no longer advertised.
+  - The `pose` related topics are no longer advertised.
+  - The GNSS fusion is automatically disabled.
+  - The Plane Detection is automatically disabled.
+  - The Positional Tracking services are no longer advertised.
+  - Depth stability follows the ZED SDK behaviors.
+  - Object Tracking follows the ZED SDK behaviors.
+  - Body Tracking follows the ZED SDK behaviors.
+
+- Add new parameter `debug.debug_dyn_params` to enable debug logs for dynamic parameters changes. 
+
+  - Dynamic parameters related logs are now displayed only if the new debug parameter `debug.debug_dyn_params` is set to `true` to avoid log spam when changing dynamic parameters.
+
+v5.2.1
+------
+- Added the parameter `general.grab_compute_capping_fps` to define a computation upper limit to the grab frequency.
+
+  - This can be useful to get a known constant fixed rate or limit the computation load while keeping a short exposure time by setting a high camera capture framerate.
+  - If set to 0, the grab compute capping will be disabled, and the ZED SDK will process data at the grab rate.
+- URDF now belongs to the `zed_description` package, which is now a dependency of the `zed_wrapper` package. This allows to use the URDF files of the ZED ROS2 Wrapper in other packages without depending on the whole wrapper.
+
+  - The `zed_description` is available in binary form for ROS 2 Humble, Jazzy, and Rolling and can be installed with `sudo apt install ros-$ROS_DISTRO-zed-description`
+
+v5.2.0
+------
+- Removed the `zed_wrapper/urdf/include/materials.urdf.xacro` file and moved the material settings directly in the `zed_macro.urdf.xacro` file to avoid possible conflicts in multi-camera configurations. Thx @davesarmoury for the fix
+- Added the `enable_localization_only` parameter to the configuration to allow the camera to localize in the loaded area memory without updating the map with new information.
+- Added support for the ZED SDK Positional Tracking 2D mode if the SDK version is 5.1 or higher.
+- Added the `zed_debug` package for debugging ZED Components by loading them in a single C++ process.
+- Add `enable_depth` service to disable depth processing at runtime
+- Positional Tracking `GEN_3` is now the default mode when using ZED SDK v5.2 or newer, providing improved stability and performance. The `GEN_2` mode is still available as an option for users who prefer it or need it for specific use cases.
+- When using GEN_3 with ZED SDK v5.2 or newer, Positional Tracking continues to provide localization feedback even if depth is disabled at runtime or when the node starts by setting the `depth.depth_mode` parameter to `NONE`.
+- New diagnostic information regarding Positional Tracking status: "Mode", "Odometry Status", "Spatial Memory Status", "Tracking Fusion Status".
+
 v5.1.0
 ------
 - Changed ZED Camera image topic names to match the cleaner convention used by ZED X One cameras:

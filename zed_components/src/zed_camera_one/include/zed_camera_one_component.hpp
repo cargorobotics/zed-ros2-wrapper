@@ -28,6 +28,14 @@
 namespace stereolabs
 {
 
+// Categorizes image topics for transport plugin filtering.
+// IMAGE: visual data from sl::VIEW (8-bit: BGRA8, BGR8, MONO8)
+// MEASURE: metric data from sl::MEASURE (float: 32FC1, or 16UC1 in OpenNI mode)
+#ifndef STEREOLABS_IMAGE_TOPIC_TYPE_DEFINED
+#define STEREOLABS_IMAGE_TOPIC_TYPE_DEFINED
+enum class ImageTopicType { IMAGE, MEASURE };
+#endif
+
 class ZedCameraOne : public rclcpp::Node
 {
 public:
@@ -116,6 +124,19 @@ protected:
     camInfoMsgPtr & camInfoMsg,
     const std::string & imgFrameId,
     const rclcpp::Time & t);
+
+  // IPC-aware overload: publishes zero-copy via rclcpp::Publisher and
+  // compressed via image_transport when subscribers exist
+  void publishImageWithInfo(
+    const sl::Mat & img,
+    const adaptedImagePub & ipcPubImg,
+    const image_transport::Publisher & itPubImg,
+    const camInfoPub & infoPub,
+    const camInfoPub & infoPubTrans,
+    camInfoMsgPtr & camInfoMsg,
+    const std::string & imgFrameId,
+    const rclcpp::Time & t);
+
 #ifdef FOUND_ISAAC_ROS_NITROS
   void publishImageWithInfo(
     const sl::Mat & img,
@@ -246,6 +267,7 @@ private:
 
   // ----> Debug variables
   bool _debugCommon = false;
+  bool _debugDynParams = false;
   bool _debugVideoDepth = false;
   bool _debugSensors = false;
   bool _debugCamCtrl = false;
@@ -283,6 +305,14 @@ private:
   image_transport::Publisher _pubColorRawImg;
   image_transport::Publisher _pubGrayImg;
   image_transport::Publisher _pubGrayRawImg;
+
+  // IPC-aware raw image publishers (zero-copy capable)
+  // Type-adapted publishers: intra-process subscribers receive StampedSlMat
+  // directly (no serialization), inter-process subscribers get auto-converted Image
+  adaptedImagePub _pubIpcColorImg;
+  adaptedImagePub _pubIpcColorRawImg;
+  adaptedImagePub _pubIpcGrayImg;
+  adaptedImagePub _pubIpcGrayRawImg;
 
 #ifdef FOUND_ISAAC_ROS_NITROS
   // Nitros image publishers with camera info
@@ -372,6 +402,9 @@ private:
   bool _publishSensTemp = false;
 
   std::string _svoFilepath = "";
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  std::string _svoDecryptionKey = "";
+#endif
   bool _svoLoop = false;
   bool _svoRealtime = false;
   int _svoFrameStart = 0;
@@ -382,6 +415,7 @@ private:
   std::string _streamAddr = "";      // Address for local streaming input
   int _streamPort = 10000;
 
+  bool _changeThreadSched = false;
   std::string _threadSchedPolicy;
   int _threadPrioGrab;
   int _threadPrioSens;
@@ -427,7 +461,7 @@ private:
   // ----> Running status
   bool _debugMode = false;  // Debug mode active?
   bool _svoMode = false;        // Input from SVO?
-  bool _svoPause = false;       // SVO pause status
+  std::atomic<bool> _svoPause{false};  // SVO pause status
   int _svoFrameId = 0;          // Current SVO frame ID
   int _svoFrameCount = 0;     // Total number of frames in SVO
   bool _streamMode = false;     // Expecting local streaming data?
