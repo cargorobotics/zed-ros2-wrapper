@@ -363,6 +363,8 @@ protected:
   void applyZEDXAutoAnalogGainRange();
   void applyZEDXAutoDigitalGainRange();
   void applyZEDXDenoising();
+  void applyZEDXAEAntibanding();
+  void readSceneIlluminance();
 
   void applyDepthSettings();
 
@@ -547,6 +549,7 @@ private:
   double mSvoExpectedPeriod = 0.0;
   bool mUseSvoTimestamp = false;
   bool mUsePubTimestamps = false;
+  bool mUseSdkMonotonicClock = false;
   bool mGrabOnce = false;
   bool mGrabImuOnce = false;
   int mVerbose = 1;
@@ -730,6 +733,8 @@ private:
   int mGmslAutoDigitalGainRangeMin = 1;
   int mGmslAutoDigitalGainRangeMax = 256;
   int mGmslDenoising = 50;
+  int mGmslAEAntibanding = 1;  // 0=OFF, 1=AUTO, 2=50Hz, 3=60Hz
+  int mSceneIlluminance = -1;  // Read-only, populated from SDK getCameraSettings
   // <---- Dynamic params
 
   // ----> QoS
@@ -1189,6 +1194,9 @@ private:
   unsigned int mSvoRecFramerate = 0;
   bool mSvoRecTranscode = false;
   std::string mSvoRecFilename;
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  sl::SVO_ENCODING_PRESET mSvoRecEncodingPreset = sl::SVO_ENCODING_PRESET::DEFAULT;
+#endif
   // <---- SVO Recording parameters
 
   // ----> Services

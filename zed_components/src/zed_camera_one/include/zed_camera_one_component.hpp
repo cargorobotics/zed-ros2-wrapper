@@ -380,6 +380,7 @@ private:
   std::string _sdkVerboseLogFile = ""; // SDK Verbose Log file
   int _gpuId = -1; // GPU ID
   bool _usePubTimestamps = false; // Use publishing timestamp instead of grab timestamp
+  bool _useSdkMonotonicClock = false; // [SDK >= 5.3] Use sl::TIMESTAMP_CLOCK::MONOTONIC_CLOCK
   bool _grabOnce = false;
   bool _grabImuOnce = false;
 
@@ -455,6 +456,8 @@ private:
   int _camAutoDigitalGainRangeMin = 1;
   int _camAutoDigitalGainRangeMax = 256;
   int _camDenoising = 50;
+  int _camAEAntibanding = 1;  // 0=OFF, 1=AUTO, 2=50Hz, 3=60Hz
+  int _sceneIlluminance = -1;  // Read-only, populated from SDK getCameraSettings
   std::unordered_map<std::string, bool> _camDynParMapChanged;
   // <---- Dynamic params
 
@@ -552,6 +555,9 @@ private:
   unsigned int _svoRecFramerate = 0;
   bool _svoRecTranscode = false;
   std::string _svoRecFilename;
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  sl::SVO_ENCODING_PRESET _svoRecEncodingPreset = sl::SVO_ENCODING_PRESET::DEFAULT;
+#endif
   // <---- SVO Recording parameters
 
   // ----> Services

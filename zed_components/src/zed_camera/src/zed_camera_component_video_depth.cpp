@@ -16,12 +16,23 @@
 #include "sl_logging.hpp"
 #include "sl_tools.hpp"
 
+#include <mutex>
 #include <sensor_msgs/distortion_models.hpp>
 #include <sensor_msgs/image_encodings.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <image_transport/camera_common.hpp>
+
+namespace
+{
+// Pluginlib's class loader is not thread-safe during the first dlopen of a
+// transport library. In component_container_isolated, multiple camera
+// components initialize concurrently and race on the compressedDepth factory.
+// This mutex serializes image_transport publisher creation across all instances
+// of this component type in the same process.
+std::mutex g_it_pub_init_mutex;
+}
 
 namespace stereolabs
 {
@@ -216,12 +227,15 @@ void ZedCamera::initVideoDepthPublishers()
       image_transport::Publisher & itPub,
       ImageTopicType type = ImageTopicType::IMAGE) {
         ipcPub = create_ipc_pub(topic);
-        set_transport_plugins(topic, type);
+        {
+          std::lock_guard<std::mutex> lock(g_it_pub_init_mutex);
+          set_transport_plugins(topic, type);
 #ifdef FOUND_HUMBLE
-        itPub = image_transport::create_publisher(this, topic, qos);
+          itPub = image_transport::create_publisher(this, topic, qos);
 #else
-        itPub = image_transport::create_publisher(this, topic, qos, mPubOpt);
+          itPub = image_transport::create_publisher(this, topic, qos, mPubOpt);
 #endif
+        }
         log_cam_pub(itPub);
       };
 
@@ -538,6 +552,12 @@ void ZedCamera::getVideoParams()
       shared_from_this(), "video.denoising", mGmslDenoising,
       mGmslDenoising,
       " * ZED X Auto Digital Gain range max: ", true, 0, 100);
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+    sl_tools::getParam(
+      shared_from_this(), "video.ae_antibanding", mGmslAEAntibanding,
+      mGmslAEAntibanding,
+      " * ZED X AE Anti-banding (0=OFF,1=AUTO,2=50Hz,3=60Hz): ", true, 0, 3);
+#endif
   }
 }
 
@@ -1333,6 +1353,10 @@ void ZedCamera::applyZEDXSettings()
   applyZEDXAutoAnalogGainRange();
   applyZEDXAutoDigitalGainRange();
   applyZEDXDenoising();
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  applyZEDXAEAntibanding();
+  readSceneIlluminance();
+#endif
 }
 
 void ZedCamera::applyZEDXExposureSettings()
@@ -1571,6 +1595,43 @@ void ZedCamera::applyZEDXDenoising()
     }
   }
 }
+
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+void ZedCamera::applyZEDXAEAntibanding()
+{
+  if (!mStreamMode) {
+    sl::ERROR_CODE err;
+    sl::VIDEO_SETTINGS setting = sl::VIDEO_SETTINGS::AE_ANTIBANDING;
+    int value;
+    err = mZed->getCameraSettings(setting, value);
+    if (err == sl::ERROR_CODE::SUCCESS && value != mGmslAEAntibanding) {
+      err = mZed->setCameraSettings(setting, mGmslAEAntibanding);
+      DEBUG_STREAM_CTRL(
+        "New setting for " << sl::toString(setting).c_str()
+                           << ": " << mGmslAEAntibanding
+                           << " [Old " << value << "]");
+    }
+
+    if (err != sl::ERROR_CODE::SUCCESS) {
+      RCLCPP_WARN_STREAM(
+        get_logger(), "Error setting "
+          << sl::toString(setting).c_str()
+          << ": "
+          << sl::toString(err).c_str());
+    }
+  }
+}
+
+void ZedCamera::readSceneIlluminance()
+{
+  sl::ERROR_CODE err;
+  int value = -1;
+  err = mZed->getCameraSettings(sl::VIDEO_SETTINGS::SCENE_ILLUMINANCE, value);
+  if (err == sl::ERROR_CODE::SUCCESS) {
+    mSceneIlluminance = value;
+  }
+}
+#endif
 
 void ZedCamera::processVideoDepth()
 {
@@ -2645,14 +2706,18 @@ void ZedCamera::publishDisparity(
   disparityMsg->header = disparityMsg->image.header;
   disparityMsg->f =
     zedParam.camera_configuration.calibration_parameters.left_cam.fx;
-  disparityMsg->t = zedParam.camera_configuration.calibration_parameters
+  // ZED SDK returns negative disparity (d = x_right - x_left < 0), so t must be
+  // negative for depth = f*t/d to remain positive.
+  disparityMsg->t = -zedParam.camera_configuration.calibration_parameters
     .getCameraBaseline();
+  // With negative t: near objects → most-negative disparity (= min), far → max.
   disparityMsg->min_disparity =
     disparityMsg->f * disparityMsg->t /
-    mZed->getInitParameters().depth_maximum_distance;
+    mZed->getInitParameters().depth_minimum_distance;
   disparityMsg->max_disparity =
     disparityMsg->f * disparityMsg->t /
-    mZed->getInitParameters().depth_minimum_distance;
+    mZed->getInitParameters().depth_maximum_distance;
+  disparityMsg->delta_d = 1.0f / 16.0f;
 
   DEBUG_STREAM_VD(" * Publishing DISPARITY message");
   try {
@@ -3244,7 +3309,8 @@ bool ZedCamera::handleGmsl2Params(
     name == "video.digital_gain" ||
     name == "video.auto_digital_gain_range_min" ||
     name == "video.auto_digital_gain_range_max" ||
-    name == "video.denoising")
+    name == "video.denoising" ||
+    name == "video.ae_antibanding")
   {
     rclcpp::ParameterType correctType = rclcpp::ParameterType::PARAMETER_INTEGER;
     if (param.get_type() != correctType) {
@@ -3279,6 +3345,8 @@ bool ZedCamera::handleGmsl2Params(
       mGmslAutoDigitalGainRangeMax = val;
     } else if (name == "video.denoising") {
       mGmslDenoising = val;
+    } else if (name == "video.ae_antibanding") {
+      mGmslAEAntibanding = val;
     }
     mCamSettingsDirty = true;
     DEBUG_STREAM_DYN_PARAMS("Parameter '" << name << "' correctly set to " << val);
