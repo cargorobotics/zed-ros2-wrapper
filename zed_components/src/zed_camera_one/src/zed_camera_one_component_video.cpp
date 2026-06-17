@@ -15,10 +15,17 @@
 #include "zed_camera_one_component.hpp"
 #include "sl_logging.hpp"
 
+#include <mutex>
 #include <image_transport/camera_common.hpp>
 
 #include <sensor_msgs/distortion_models.hpp>
 #include <sensor_msgs/image_encodings.hpp>
+
+namespace
+{
+// Same race guard as in zed_camera_component_video_depth.cpp — see comment there.
+std::mutex g_it_pub_init_mutex;
+}
 
 namespace stereolabs
 {
@@ -121,6 +128,14 @@ void ZedCameraOne::getVideoParams()
     shared_from_this(), "video.denoising", _camDenoising,
     _camDenoising, " * Denoising: ", true, 0, 100);
   _camDynParMapChanged["video.denoising"] = true;
+
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  sl_tools::getParam(
+    shared_from_this(), "video.ae_antibanding", _camAEAntibanding,
+    _camAEAntibanding,
+    " * AE Anti-banding (0=OFF,1=AUTO,2=50Hz,3=60Hz): ", true, 0, 3);
+  _camDynParMapChanged["video.ae_antibanding"] = true;
+#endif
 
   _triggerUpdateDynParams = true;
 }
@@ -273,12 +288,15 @@ void ZedCameraOne::initVideoPublishers()
     image_transport::Publisher & itPub,
     ImageTopicType type = ImageTopicType::IMAGE) {
       ipcPub = create_ipc_pub(topic);
-      set_transport_plugins(topic, type);
+      {
+        std::lock_guard<std::mutex> lock(g_it_pub_init_mutex);
+        set_transport_plugins(topic, type);
 #ifdef FOUND_HUMBLE
-      itPub = image_transport::create_publisher(this, topic, qos);
+        itPub = image_transport::create_publisher(this, topic, qos);
 #else
-      itPub = image_transport::create_publisher(this, topic, qos, _pubOpt);
+        itPub = image_transport::create_publisher(this, topic, qos, _pubOpt);
 #endif
+      }
       log_cam_pub(itPub);
     };
 
@@ -1253,6 +1271,20 @@ void ZedCameraOne::applyExposureCompensationAndDenoising()
     "video.exposure_compensation");
 
   setVideoSetting(sl::VIDEO_SETTINGS::DENOISING, _camDenoising, "video.denoising");
+
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  setVideoSetting(
+    sl::VIDEO_SETTINGS::AE_ANTIBANDING, _camAEAntibanding,
+    "video.ae_antibanding");
+
+  // Read-only metric: scene illuminance (cached for diagnostic publication)
+  int illum = -1;
+  if (_zed->getCameraSettings(sl::VIDEO_SETTINGS::SCENE_ILLUMINANCE, illum) ==
+    sl::ERROR_CODE::SUCCESS)
+  {
+    _sceneIlluminance = illum;
+  }
+#endif
 }
 
 void ZedCameraOne::publishCameraInfos()

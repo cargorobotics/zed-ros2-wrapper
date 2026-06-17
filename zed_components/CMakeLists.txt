@@ -139,6 +139,10 @@ ament_auto_find_build_dependencies()
 
 find_package(rcutils REQUIRED)
 find_package(zed_msgs)
+if(zed_msgs_VERSION VERSION_GREATER "5.3.0")
+  add_definitions(-DZED_MSGS_ILLUMINANCE_AVAIL)
+endif()
+
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(builtin_interfaces REQUIRED)

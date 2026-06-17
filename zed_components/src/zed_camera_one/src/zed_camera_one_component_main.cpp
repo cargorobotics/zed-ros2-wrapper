@@ -201,6 +201,13 @@ void ZedCameraOne::getGeneralParams()
   rclcpp::Parameter paramVal;
   RCLCPP_INFO(get_logger(), "=== GENERAL parameters ===");
 
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  sl_tools::getParam(
+    shared_from_this(), "general.sdk_use_monotonic_clock",
+    _useSdkMonotonicClock, _useSdkMonotonicClock,
+    " * SDK Monotonic Clock: ");
+#endif
+
   if (!_svoMode) {
     getStreamParams();
   }
@@ -259,6 +266,33 @@ void ZedCameraOne::getTopicEnableParams()
 void ZedCameraOne::getSvoParams()
 {
   rclcpp::Parameter paramVal;
+
+  RCLCPP_INFO(get_logger(), "=== SVO RECORDING parameters ===");
+
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  std::string enc_preset = "DEFAULT";
+  sl_tools::getParam(
+    shared_from_this(), "svo.svo_encoding_preset", enc_preset,
+    enc_preset, " * SVO Encoding preset: ");
+  if (enc_preset == "ULTRAFAST") {
+    _svoRecEncodingPreset = sl::SVO_ENCODING_PRESET::ULTRAFAST;
+  } else if (enc_preset == "FAST") {
+    _svoRecEncodingPreset = sl::SVO_ENCODING_PRESET::FAST;
+  } else if (enc_preset == "MEDIUM") {
+    _svoRecEncodingPreset = sl::SVO_ENCODING_PRESET::MEDIUM;
+  } else if (enc_preset == "SLOW") {
+    _svoRecEncodingPreset = sl::SVO_ENCODING_PRESET::SLOW;
+  } else {
+    if (enc_preset != "DEFAULT") {
+      RCLCPP_WARN_STREAM(
+        get_logger(),
+        "Invalid 'svo.svo_encoding_preset' value: '"
+          << enc_preset
+          << "'. Valid values: DEFAULT, ULTRAFAST, FAST, MEDIUM, SLOW. Using 'DEFAULT'.");
+    }
+    _svoRecEncodingPreset = sl::SVO_ENCODING_PRESET::DEFAULT;
+  }
+#endif
 
   RCLCPP_INFO(get_logger(), "=== SVO INPUT parameters ===");
 
@@ -605,7 +639,6 @@ void ZedCameraOne::getDebugParams()
     shared_from_this(), "debug.use_pub_timestamps",
     _usePubTimestamps, _usePubTimestamps,
     " * Use Pub Timestamps: ");
-
   sl_tools::getParam(
     shared_from_this(), "debug.debug_common", _debugCommon,
     _debugCommon, " * Debug Common: ");
@@ -946,6 +979,29 @@ void ZedCameraOne::setZedInitParams()
 bool ZedCameraOne::openZedCamera()
 {
   _grabStatus = sl::ERROR_CODE::LAST;
+
+  // Tell sl_tools whether timestamps come from a replay source (SVO) so
+  // slTime2Ros bypasses the live monotonic-clock offset for recorded values.
+  // Mono component has no simulation mode.
+  sl_tools::setSdkReplayMode(_svoMode);
+
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  if (_useSdkMonotonicClock) {
+    sl::Camera::setTimestampClock(sl::TIMESTAMP_CLOCK::MONOTONIC_CLOCK);
+    if (sl::Camera::getTimestampClock() != sl::TIMESTAMP_CLOCK::MONOTONIC_CLOCK) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Another node in this process already set the SDK timestamp clock; "
+        "this node's 'debug.sdk_use_monotonic_clock' request was ignored.");
+      _useSdkMonotonicClock = false;
+    } else {
+      RCLCPP_INFO(
+        get_logger(),
+        "SDK timestamp clock set to MONOTONIC_CLOCK (process-wide).");
+    }
+  }
+#endif
+
   _connStatus = _zed->open(_initParams);
 
   if (_connStatus != sl::ERROR_CODE::SUCCESS) {
@@ -1011,6 +1067,20 @@ bool ZedCameraOne::openZedCamera()
     }
   } else {
     DEBUG_STREAM_COMM("Opening successfull");
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+    if (_useSdkMonotonicClock && !_svoMode) {
+      const sl::Timestamp sdk_now = sl::getCurrentTimeStamp();
+      const rclcpp::Time ros_now = get_clock()->now();
+      const int64_t offset_ns =
+        static_cast<int64_t>(ros_now.nanoseconds()) -
+        static_cast<int64_t>(sdk_now.getNanoseconds());
+      sl_tools::setSdkLiveTimeOffsetNs(offset_ns);
+      RCLCPP_INFO_STREAM(
+        get_logger(),
+        "SDK monotonic-clock offset captured: "
+          << (offset_ns / 1000000) << " ms");
+    }
+#endif
   }
   return true;
 }
@@ -1188,6 +1258,11 @@ void ZedCameraOne::callback_updateDiagnostic(
     updateImageDiagnostics(stat);
     updateSvoDiagnostics(stat);
     updateTfImuDiagnostics(stat);
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+    if (_sceneIlluminance >= 0) {
+      stat.add("Scene Illuminance", _sceneIlluminance);
+    }
+#endif
   } else if (_grabStatus == sl::ERROR_CODE::LAST) {
     stat.summary(
       diagnostic_msgs::msg::DiagnosticStatus::OK,
@@ -1572,6 +1647,11 @@ bool ZedCameraOne::handleExposure(
   } else if (param_name == "video.exposure_compensation") {
     if (updateIntParam(param_name, param.as_int(), _camExposureComp)) {count_ok++;}
     return true;
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  } else if (param_name == "video.ae_antibanding") {
+    if (updateIntParam(param_name, param.as_int(), _camAEAntibanding)) {count_ok++;}
+    return true;
+#endif
   } else if (param_name == "video.exposure_time") {
     if (updateIntParam(param_name, param.as_int(), _camExpTime)) {
       count_ok++;
@@ -2579,6 +2659,9 @@ bool ZedCameraOne::startSvoRecording(std::string & errMsg)
   params.target_framerate = _svoRecFramerate;
   params.transcode_streaming_input = _svoRecTranscode;
   params.video_filename = _svoRecFilename.c_str();
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 53
+  params.encoding_preset = _svoRecEncodingPreset;
+#endif
 
   sl::ERROR_CODE err = _zed->enableRecording(params);
   errMsg = sl::toString(err);
