@@ -14,6 +14,19 @@ find_package(OpenCV REQUIRED)
 find_package(CUDA ${ZED_CUDA_VERSION} REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
+# Jetson/L4T link fix: the ZED SDK (5.x) pulls in libnvargus_socketclient.so,
+# which has an undefined reference to jpeg_set_hardware_acceleration_parameters_enc.
+# That symbol lives in NVIDIA's tegra libnvjpeg (NOT CUDA's libnvjpeg), so link it
+# explicitly from the platform driver path. See README.md.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES aarch64)
+    find_library(TEGRA_NVJPEG_LIB nvjpeg
+        PATHS /usr/lib/aarch64-linux-gnu/nvidia /usr/lib/aarch64-linux-gnu/tegra
+        NO_DEFAULT_PATH)
+    if(NOT TEGRA_NVJPEG_LIB)
+        message(FATAL_ERROR "Tegra libnvjpeg not found under /usr/lib/aarch64-linux-gnu/{nvidia,tegra}")
+    endif()
+endif()
+
 include_directories(${CUDA_INCLUDE_DIRS})
 include_directories(${ZED_INCLUDE_DIRS})
 include_directories(${OpenCV_INCLUDE_DIRS})
@@ -34,7 +47,7 @@ set(CALIBRATION_SOURCES
 
 add_executable(${PROJECT_NAME} ${HDR_FILES} ${CALIBRATION_SOURCES})
 
-TARGET_LINK_LIBRARIES(${PROJECT_NAME} ${ZED_LIBRARIES} ${CUDA_LIBRARIES} ${OpenCV_LIBRARIES} yaml-cpp)
+TARGET_LINK_LIBRARIES(${PROJECT_NAME} ${ZED_LIBRARIES} ${CUDA_LIBRARIES} ${OpenCV_LIBRARIES} yaml-cpp ${TEGRA_NVJPEG_LIB})
 
 # Ship shared config alongside the binaries.
 #   zed_stereo_calibration --config /opt/zed-opencv-calibration/config/fisheye_stereo.yaml

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!-- © 2026, Cargo Robotics -->
+<package format="3">
+    <name>zed_opencv_calibration</name>
+    <version>0.0.1</version>
+    <description>
+        ZED fisheye stereo calibration and reprojection viewer tools.
+        Plain CMake package (no ament) so colcon discovers and builds the
+        zed_stereo_calibration and zed_reprojection_viewer executables.
+        Adopted from https://github.com/stereolabs/zed-opencv-calibration with
+        Cargo-maintained local patches (see README.md).
+    </description>
+    <maintainer email="engineering@withcargo.com">Cargo Robotics</maintainer>
+    <license>Apache License 2.0</license>
+    <url type="repository">https://github.com/stereolabs/zed-opencv-calibration</url>
+
+    <buildtool_depend>cmake</buildtool_depend>
+
+    <depend>opencv</depend>
+    <depend>yaml-cpp</depend>
+    <depend>libglew-dev</depend>
+    <depend>freeglut3-dev</depend>
+
+    <export>
+        <build_type>cmake</build_type>
+    </export>
+</package>

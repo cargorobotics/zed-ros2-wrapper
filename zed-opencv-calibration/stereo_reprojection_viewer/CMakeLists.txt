@@ -24,6 +24,19 @@ find_package(GLEW REQUIRED)
 SET(OpenGL_GL_PREFERENCE GLVND)
 find_package(OpenGL REQUIRED)
 
+# Jetson/L4T link fix: the ZED SDK (5.x) pulls in libnvargus_socketclient.so,
+# which has an undefined reference to jpeg_set_hardware_acceleration_parameters_enc.
+# That symbol lives in NVIDIA's tegra libnvjpeg (NOT CUDA's libnvjpeg), so link it
+# explicitly from the platform driver path. See README.md.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES aarch64)
+    find_library(TEGRA_NVJPEG_LIB nvjpeg
+        PATHS /usr/lib/aarch64-linux-gnu/nvidia /usr/lib/aarch64-linux-gnu/tegra
+        NO_DEFAULT_PATH)
+    if(NOT TEGRA_NVJPEG_LIB)
+        message(FATAL_ERROR "Tegra libnvjpeg not found under /usr/lib/aarch64-linux-gnu/{nvidia,tegra}")
+    endif()
+endif()
+
 include_directories(${OpenCV_INCLUDE_DIRS})
 include_directories(${ZED_INCLUDE_DIRS})
 include_directories(${GLEW_INCLUDE_DIRS})
@@ -59,7 +72,8 @@ TARGET_LINK_LIBRARIES(${PROJECT_NAME}
                         ${GLUT_LIBRARIES}
                         ${GLEW_LIBRARIES}
                         ${OpenCV_LIBRARIES}
-                        yaml-cpp)
+                        yaml-cpp
+                        ${TEGRA_NVJPEG_LIB})
 
 if(INSTALL_SAMPLES)
     LIST(APPEND SAMPLE_LIST ${PROJECT_NAME})
