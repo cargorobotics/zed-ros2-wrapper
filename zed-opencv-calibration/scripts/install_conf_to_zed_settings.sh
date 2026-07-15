@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # © 2026, Cargo Robotics
 # Offer to copy the newest SN<virtual_sn>.conf from a calibration output directory into
-# /usr/local/zed/settings so the ZED SDK loads it by default. Run inside the zed-end-effector
+# /usr/local/zed/settings so the ZED SDK loads it by default. Run inside the end-effector-camera-calibration
 # container (or on-host with matching paths).
 
 set -euo pipefail

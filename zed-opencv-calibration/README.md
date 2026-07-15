@@ -15,7 +15,7 @@ This project provides two main applications for working with ZED cameras:
 
 ## Run on the vehicle (recommended)
 
-Use the same ZED SDK and ROS image as the rest of the stack: start an interactive shell with the **`zed-end-effector`** service (does not launch the ROS node; `--rm` drops the container when you exit).
+Use the same ZED SDK and ROS image as the rest of the stack: start an interactive shell with the **`end-effector-camera-calibration`** service (does not launch the ROS node; `--rm` drops the container when you exit).
 
 **GUI / X11 on the host:** `zed_stereo_calibration` and `zed_reprojection_viewer` open interactive windows. Before starting the container, run this **on the host** in the same graphical session you will use (so `DISPLAY` is valid, e.g. `:0`):
 
@@ -28,7 +28,7 @@ That allows local Docker clients to connect to your X server. Without it, OpenCV
 From the repository root:
 
 ```bash
-docker compose -f docker-compose-deploy.yml run --rm zed-end-effector bash
+docker compose -f docker-compose-utilities.yml run --rm end-effector-camera-calibration bash
 ```
 
 ### 1. One-time setup inside the container
@@ -44,11 +44,11 @@ Put them on `PATH` (they are not there by default):
 export PATH="/root/ros2_ws/build/zed_opencv_calibration/stereo_calibration:/root/ros2_ws/build/zed_opencv_calibration/stereo_reprojection_viewer:${PATH}"
 ```
 
-`docker-compose-deploy.yml` bind-mounts this package at **`/opt/zed-opencv-calibration`** as well as under `src/` so **`zed_reprojection_viewer`** finds **`/opt/zed-opencv-calibration/config/fisheye_stereo.yaml`** with no extra symlink step.
+The `end-effector-camera-calibration` service (`docker-compose-utilities.yml`) bind-mounts this package at **`/opt/zed-opencv-calibration`** as well as under `src/` so **`zed_reprojection_viewer`** finds **`/opt/zed-opencv-calibration/config/fisheye_stereo.yaml`** with no extra symlink step.
 
 ### 2. Calibration data paths and YAML
 
-`docker-compose-deploy.yml` bind-mounts **`/var/cargo/zed-calibration/images`** and **`/var/cargo/zed-calibration/calibration_config`** into the container. Point `images_dir` and `calibration_output_dir` in the YAML at those paths (see the checked-in `config/fisheye_stereo.yaml`). All calibration I/O happens **inside the container**; the mounts persist captures and `SN*.conf` / `zed_calibration_*.yml` on the vehicle under `/var/cargo/`.
+The `end-effector-camera-calibration` service (`docker-compose-utilities.yml`) bind-mounts **`/var/cargo/zed-calibration/images`** and **`/var/cargo/zed-calibration/calibration_config`** into the container. Point `images_dir` and `calibration_output_dir` in the YAML at those paths (see the checked-in `config/fisheye_stereo.yaml`). All calibration I/O happens **inside the container**; the mounts persist captures and `SN*.conf` / `zed_calibration_*.yml` on the vehicle under `/var/cargo/`.
 
 If a path is missing the first time, create it from the same shell session (before running the tools):
 
@@ -87,7 +87,7 @@ bash /root/ros2_ws/src/zed-opencv-calibration/scripts/install_conf_to_zed_settin
 
 `/usr/local/zed/settings` in the container is the same folder as on the host, so installs persist.
 
-**Host prerequisites:** `xhost +local:docker` (see above); ZED X GMSL stack — e.g. `nvargus-daemon` and `zed_x_daemon` running; same as the full `zed-end-effector` service. Compose passes **`DISPLAY`** into the service for GUI apps.
+**Host prerequisites:** `xhost +local:docker` (see above); ZED X GMSL stack — e.g. `nvargus-daemon` and `zed_x_daemon` running; same as the full `end-effector-camera-calibration` service. Compose passes **`DISPLAY`** into the service for GUI apps.
 
 ## Requirements
 
@@ -145,7 +145,7 @@ The calibration requires a printed checkerboard pattern with:
 
 #### Configure the Calibration
 
-Edit `config/fisheye_stereo.yaml` with your camera serials, ZED SDK resolution mode, directories, and checkerboard parameters. For **`zed-end-effector`** with the default compose mounts, paths look like:
+Edit `config/fisheye_stereo.yaml` with your camera serials, ZED SDK resolution mode, directories, and checkerboard parameters. For **`end-effector-camera-calibration`** with the default compose mounts, paths look like:
 
 ```yaml
 left_sn: 305932808
@@ -170,13 +170,13 @@ images_dir: ""   # non-empty => load existing pairs from this dir and skip live 
   /usr/local/zed/tools/ZED_Explorer --all
   ```
 
-  Use the same shell as your calibration workflow (e.g. after `docker compose … run zed-end-effector bash`) so the tool sees the GMSL/USB devices. Match each serial to the **left** and **right** camera in your rig when filling in `left_sn` and `right_sn`.
+  Use the same shell as your calibration workflow (e.g. after `docker compose … run end-effector-camera-calibration bash`) so the tool sees the GMSL/USB devices. Match each serial to the **left** and **right** camera in your rig when filling in `left_sn` and `right_sn`.
 
 Live capture uses **`capture_images_dir`** (default in code is `/var/cargo/zed-calibration/images/` if the key is omitted). **`images_dir`** is only for extrinsics-only mode from pre-collected `image_left_*.png` / `image_right_*.png`.
 
 #### Run the Calibration
 
-Inside the **`zed-end-effector`** shell (see [Run on the vehicle](#run-on-the-vehicle-recommended)):
+Inside the **`end-effector-camera-calibration`** shell (see [Run on the vehicle](#run-on-the-vehicle-recommended)):
 
 ```bash
 export PATH="/root/ros2_ws/build/zed_opencv_calibration/stereo_calibration:/root/ros2_ws/build/zed_opencv_calibration/stereo_reprojection_viewer:${PATH}"
@@ -316,7 +316,7 @@ For virtual stereo camera setups (e.g., two ZED X One cameras), the reprojection
 
 #### Run the Reprojection Viewer
 
-After [setting up `PATH`](#1-one-time-setup-inside-the-container) in the **`zed-end-effector`** shell (compose mounts config at `/opt/zed-opencv-calibration/config/`):
+After [setting up `PATH`](#1-one-time-setup-inside-the-container) in the **`end-effector-camera-calibration`** shell (compose mounts config at `/opt/zed-opencv-calibration/config/`):
 
 ```bash
 zed_reprojection_viewer

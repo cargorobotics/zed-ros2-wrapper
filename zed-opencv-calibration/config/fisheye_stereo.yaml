@@ -15,7 +15,7 @@ resolution: HD1200
 # - SN<virtual_stereo_sn>.conf
 # - zed_calibration_<virtual_stereo_sn>.yml
 # zed_reprojection_viewer uses this as optional_settings_path.
-# Must match a host bind-mount for `zed-end-effector` in docker-compose-deploy.yml
+# Must match a host bind-mount for `end-effector-camera-calibration` in docker-compose-utilities.yml
 # (default: /var/cargo/zed-calibration/calibration_config on the vehicle).
 calibration_output_dir: "/var/cargo/zed-calibration/calibration_config"
 
