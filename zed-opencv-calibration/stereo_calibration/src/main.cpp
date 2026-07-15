@@ -34,7 +34,7 @@ int h_edges;
 int v_edges;
 float square_size;
 
-// Folder used when capturing live (see capture_images_dir in fisheye_stereo.yaml; default matches zed-end-effector bind-mount).
+// Folder used when capturing live (see capture_images_dir in fisheye_stereo.yaml; default matches end-effector-camera-calibration bind-mount).
 std::string image_folder = "/var/cargo/zed-calibration/images/";
 
 // Coverage indicator fill helpers (defined at the bottom of this file).
